@@ -20,6 +20,15 @@ class Client extends SoapClient
    */
   public function __construct($wsdl, $options, array $headers = [])
   {
+            if (!$options) $options = [];
+
+        $this->_connectionTimeout =
+            @$options['connection_timeout']
+            ?: ini_get ('default_socket_timeout');
+        $this->_socketTimeout =
+            @$options['socket_timeout']
+            ?: ini_get ('default_socket_timeout');
+        unset ($options['socket_timeout']);
     parent::SoapClient($wsdl, $options);
 
     if (!empty($headers)) {
@@ -153,7 +162,64 @@ class Client extends SoapClient
    */
   public function doRequest($request, $location, $action, $version, $one_way)
   {
-    return $this->__doRequest($request, $location, $action, $version, $one_way);
+      $url_parts = parse_url ($location);
+        $host = $url_parts['host'];
+        $port =
+            @$url_parts['port']
+            ?: ($url_parts['scheme'] == 'https' ? 443 : 80);
+        $length = strlen ($request);
+
+        // Form the HTTP SOAP request.
+        $http_req = "POST $location HTTP/1.0\r\n";
+        $http_req .= "Host: $host\r\n";
+        $http_req .= "SoapAction: $action\r\n";
+        $http_req .= "Content-Type: text/xml; charset=utf-8\r\n";
+        $http_req .= "Content-Length: $length\r\n";
+        $http_req .= "\r\n";
+        $http_req .= $request;
+
+        // Need to tell fsockopen to use SSL when requested.
+        if ($url_parts['scheme'] == 'https')
+            $host = 'ssl://'.$host;
+
+        // Open the connection.
+        $socket = @fsockopen (
+            $host, $port, $errno, $errstr, $this->_connectionTimeout
+        );
+        if (!$socket)
+            throw new SoapFault (
+                'Client',
+                "Failed to connect to SOAP server ($location): $errstr"
+            );
+
+        // Send the request.
+        stream_set_timeout ($socket, $this->_socketTimeout);
+        fwrite ($socket, $http_req);
+
+        // Read the response.
+        $http_response = stream_get_contents ($socket);
+
+        // Close the socket and throw an exception if we timed out.
+        $info = stream_get_meta_data ($socket);
+        fclose ($socket);
+        if ($info['timed_out'])
+            throw new SoapFault (
+                'Client',
+                "HTTP timeout contacting $location"
+            );
+
+        // Extract the XML from the HTTP response and return it.
+        $response = preg_replace (
+            '/
+                \A       # Start of string
+                .*?      # Match any number of characters (as few as possible)
+                ^        # Start of line
+                \r       # Carriage Return
+                $        # End of line
+             /smx',
+            '', $http_response
+        );
+        return $response;
   }
 
   /**
