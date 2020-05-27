@@ -23,12 +23,13 @@ class Client extends SoapClient
             if (!$options) $options = [];
 
         $this->_connectionTimeout =
-            @$options['connection_timeout']
-            ?: ini_get ('default_socket_timeout');
+            isset($options['connection_timeout'])
+            ? $options['connection_timeout'] : ini_get ('default_socket_timeout');
         $this->_socketTimeout =
-            @$options['socket_timeout']
-            ?: ini_get ('default_socket_timeout');
-        unset ($options['socket_timeout']);
+            isset($options['socket_timeout'])
+            ? $options['socket_timeout'] : ini_get ('default_socket_timeout');
+    if(isset($options['socket_timeout']))    
+      unset ($options['socket_timeout']);
     parent::SoapClient($wsdl, $options);
 
     if (!empty($headers)) {
